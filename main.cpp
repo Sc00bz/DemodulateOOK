@@ -171,7 +171,7 @@ uint32_t getSample(FILE *fin, uint32_t fileFormat, uint32_t *error = NULL)
 /**
  * Counts samples of each value.
  *
- * @param counts     - A pointer to integers that recieve the number of samples with said value
+ * @param counts     - A pointer to integers that receive the number of samples with said value
  * @param fin        - The input file at the offset of where the data starts
  * @param fileFormat - The file format
  * @return The total number of samples or UINT32_MAX on error
