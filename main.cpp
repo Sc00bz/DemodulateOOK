@@ -109,7 +109,7 @@ uint32_t getSample(FILE *fin, uint32_t fileFormat, uint32_t *error = NULL)
 			return UINT32_MAX;
 		}
 	}
-	if (fread(&sample8, sampleSize, 1, fin) != 1)
+	if (fread(sample8, sampleSize, 1, fin) != 1)
 	{
 		if (!feof(fin))
 		{
@@ -178,10 +178,11 @@ uint32_t getSample(FILE *fin, uint32_t fileFormat, uint32_t *error = NULL)
  */
 uint32_t getCounts(uint32_t *counts, FILE *fin, uint32_t fileFormat)
 {
-	uint32_t count = 0;
-	uint32_t error = 0;
+	uint32_t count     = 0;
+	uint32_t error     = 0;
+	size_t   numCounts = ((size_t) 1) << (8 * getSampleByteSize(fileFormat));
 
-	for (int i = 0; i < 0x10000; i++)
+	for (size_t i = 0; i < numCounts; i++)
 	{
 		counts[i] = 0;
 	}
@@ -208,19 +209,21 @@ uint32_t getCounts(uint32_t *counts, FILE *fin, uint32_t fileFormat)
  * Finds a threshold value that anything above the value is on and anything below is off.
  * This is done by averaging the highest sample and lowest sample, ignoring the highest 2% and lowest 2% of samples.
  *
- * @param counts - A constant pointer to integers that were generated from calling getCounts()
- * @param count  - The total number of samples
+ * @param counts     - A constant pointer to integers that were generated from calling getCounts()
+ * @param count      - The total number of samples
+ * @param fileFormat - The file format
  * @return The threshold value between on and off
  */
-uint32_t findOnOffThreshold(const uint32_t *counts, uint32_t count)
+uint32_t findOnOffThreshold(const uint32_t *counts, uint32_t count, uint32_t fileFormat)
 {
+	size_t   numCounts = ((size_t) 1) << (8 * getSampleByteSize(fileFormat));
 	uint32_t hi = 0;
-	uint32_t lo = 0xffff;
+	uint32_t lo = (uint32_t) (numCounts - 1);
 	uint32_t skipCount = count / 50; // 2%
 	uint32_t curCount = 0;
 
 	// Get hi and lo
-	for (uint32_t i = 0; i < 0x10000; i++)
+	for (size_t i = 0; i < numCounts; i++)
 	{
 		if (counts[i] != 0)
 		{
@@ -233,7 +236,7 @@ uint32_t findOnOffThreshold(const uint32_t *counts, uint32_t count)
 		}
 	}
 	curCount = 0;
-	for (uint32_t i = 0xffff; i > lo; i--)
+	for (uint32_t i = (uint32_t) (numCounts - 1); i > lo; i--)
 	{
 		if (counts[i] != 0)
 		{
@@ -264,7 +267,6 @@ uint32_t findOnOffThreshold(const uint32_t *counts, uint32_t count)
  */
 uint32_t ignoreFirstSpan(uint32_t &state, uint32_t radioFlicker, uint32_t onOffThreshold, FILE *fin, uint32_t fileFormat)
 {
-	uint32_t count = 1;
 	uint32_t nextCount = 0;
 	uint32_t curState;
 	uint32_t newState;
@@ -319,8 +321,7 @@ uint32_t ignoreFirstSpan(uint32_t &state, uint32_t radioFlicker, uint32_t onOffT
 		}
 		else
 		{
-			count += nextCount + 1;
-			nextCount = 1;
+			nextCount = 0;
 		}
 	}
 	return 0;
@@ -386,6 +387,8 @@ uint32_t getNextSpan(uint32_t &state, uint32_t radioFlicker, uint32_t onOffThres
 			nextCount = 0;
 		}
 	}
+
+	// Ignore last span
 	return 0;
 }
 
@@ -406,6 +409,10 @@ uint32_t getSpans(uint32_t *spans, uint32_t maxSpan, uint32_t onOffThreshold, FI
 	uint32_t count;
 	uint32_t state = 0; // 0 = off, 1 = on
 
+	if (maxSpan == UINT32_MAX)
+	{
+		maxSpan = UINT32_MAX - 1;
+	}
 	for (uint32_t i = 0; i <= maxSpan; i++)
 	{
 		spans[i] = 0;
@@ -425,7 +432,7 @@ uint32_t getSpans(uint32_t *spans, uint32_t maxSpan, uint32_t onOffThreshold, FI
 		}
 		if (count == 0)
 		{
-			break;
+			break; // EOF
 		}
 
 		if (realMaxSpan < count)
@@ -488,8 +495,6 @@ uint32_t findSingleBitWidth(const uint32_t *spans, uint32_t maxSpan)
 	// Brute force... meh
 	for (uint32_t i = hi; i >= endAt; i--)
 	{
-		uint32_t halfI = i / 2;
-
 		curErr = 0;
 		for (uint32_t j = lo; j < hi; j++)
 		{
@@ -499,7 +504,7 @@ uint32_t findSingleBitWidth(const uint32_t *spans, uint32_t maxSpan)
 				double scaledError;
 
 				error = j % i;
-				if (error > halfI)
+				if (error > i - error)
 				{
 					error = i - error;
 				}
@@ -529,7 +534,8 @@ uint32_t printMessage(uint32_t singleBitWidth, uint32_t onOffThreshold, FILE *fi
 {
 	uint32_t bitLength = 0;
 	uint32_t leftOver;
-	uint32_t count;
+	uint32_t samples;
+	uint32_t bits;
 	uint32_t state = 0; // 0 = off, 1 = on
 	uint8_t  currentByte = 0;
 
@@ -541,30 +547,31 @@ uint32_t printMessage(uint32_t singleBitWidth, uint32_t onOffThreshold, FILE *fi
 
 	while (1)
 	{
-		count = getNextSpan(state, RADIO_FLICKER, onOffThreshold, fin, fileFormat, leftOver);
-		if (count == UINT32_MAX)
+		samples = getNextSpan(state, RADIO_FLICKER, onOffThreshold, fin, fileFormat, leftOver);
+		if (samples == UINT32_MAX)
 		{
 			return UINT32_MAX;
 		}
-		if (count == 0)
+		if (samples == 0)
 		{
-			break;
+			break; // EOF
 		}
 
-		count = (count + singleBitWidth / 2) / singleBitWidth;
+		// Round to the nearest number of bits
+		bits = (samples + singleBitWidth / 2) / singleBitWidth;
 
 		uint32_t left = 8 - bitLength % 8;
-		bitLength += count;
+		bitLength += bits;
 		if (state == 0) // off
 		{
-			if (left <= count)
+			if (left <= bits)
 			{
 				printf("%02x", currentByte);
 				currentByte = 0;
 
 				// full bytes
-				count = (count - left) / 8;
-				for (uint32_t i = 0; i < count; i++)
+				uint32_t fullBytes = (bits - left) / 8;
+				for (uint32_t i = 0; i < fullBytes; i++)
 				{
 					printf("00");
 				}
@@ -572,23 +579,23 @@ uint32_t printMessage(uint32_t singleBitWidth, uint32_t onOffThreshold, FILE *fi
 		}
 		else // on
 		{
-			if (left <= count)
+			if (left <= bits)
 			{
 				currentByte |= (1 << left) - 1;
 				printf("%02x", currentByte);
 				currentByte = 0;
 
 				// full bytes
-				uint32_t fullBytes = (count - left) / 8;
+				uint32_t fullBytes = (bits - left) / 8;
 				for (uint32_t i = 0; i < fullBytes; i++)
 				{
 					printf("ff");
 				}
-				count -= 8 * fullBytes + left;
+				bits -= 8 * fullBytes + left;
 				left = 8;
 			}
 			// extra
-			currentByte |= (1 << left) - (1 << (left - count));
+			currentByte |= (1 << left) - (1 << (left - bits));
 		}
 	}
 	if (bitLength % 8 != 0)
@@ -701,7 +708,7 @@ int main(int argc, char *argv[])
 
 	// Finding on off ranges
 	printf("Finding on off ranges...\n");
-	onOffThreshold = findOnOffThreshold(counts, count);
+	onOffThreshold = findOnOffThreshold(counts, count, fileFormat);
 	if (onOffThreshold == 0)
 	{
 		fprintf(stderr, "Error: Can't find on off ranges\n");
