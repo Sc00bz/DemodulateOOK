@@ -274,23 +274,20 @@ uint32_t ignoreFirstSpan(uint32_t &state, uint32_t radioFlicker, uint32_t onOffT
 	uint32_t error = 0;
 
 	// Get state
-	if (!feof(fin))
+	sample = getSample(fin, fileFormat, &error);
+	if (error)
 	{
-		sample = getSample(fin, fileFormat, &error);
-		if (error)
+		if (feof(fin))
 		{
-			if (feof(fin))
-			{
-				return 0;
-			}
-			return UINT32_MAX;
+			return 0;
 		}
+		return UINT32_MAX;
+	}
 
-		curState = 1; // on
-		if (sample < onOffThreshold)
-		{
-			curState = 0; // off
-		}
+	curState = 1; // on
+	if (sample < onOffThreshold)
+	{
+		curState = 0; // off
 	}
 
 	// Read samples
