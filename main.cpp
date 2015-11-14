@@ -230,7 +230,7 @@ uint32_t findOnOffThreshold(const uint32_t *counts, uint32_t count, uint32_t fil
 			curCount += counts[i];
 			if (curCount > skipCount)
 			{
-				lo = i;
+				lo = (uint32_t) i;
 				break;
 			}
 		}
