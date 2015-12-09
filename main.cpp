@@ -599,6 +599,7 @@ uint32_t printMessage(uint32_t singleBitWidth, uint32_t onOffThreshold, FILE *fi
 	{
 		printf("%02x", currentByte);
 	}
+	printf("\n");
 	return bitLength;
 }
 
